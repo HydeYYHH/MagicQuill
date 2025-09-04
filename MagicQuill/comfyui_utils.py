@@ -1,14 +1,10 @@
 import os
 import folder_paths
-import comfy.diffusers_load
-import comfy.samplers
 import comfy.sample
 import comfy.sd
 import comfy.utils
 import comfy.controlnet
-import comfy.clip_vision
 import comfy.model_management
-from comfy.cli_args import args
 import torch
 import torch.nn as nn
 import numpy as np
@@ -16,9 +12,8 @@ import latent_preview
 from PIL import Image
 from einops import rearrange
 import scipy.ndimage
-import sys
 import cv2
-from magic_utils import HWC3, apply_color, common_input_validate, resize_image_with_pad
+from magic_utils import HWC3, common_input_validate, resize_image_with_pad
 from pidi import pidinet
 
 
@@ -157,21 +152,6 @@ class VAEDecode:
     def decode(self, vae, samples):
         return (vae.decode(samples["samples"]), )
 
-class ColorDetector:
-    def __call__(self, input_image=None, detect_resolution=2048, output_type=None, **kwargs):
-        input_image, output_type = common_input_validate(input_image, output_type, **kwargs)
-        input_image = HWC3(input_image)
-        detected_map = HWC3(apply_color(input_image, detect_resolution))
-        
-        if output_type == "pil":
-            detected_map = Image.fromarray(detected_map)
-            
-        return detected_map
-
-class Color_Preprocessor:
-    def execute(self, image, resolution=512, **kwargs):
-        return (common_annotator_call(ColorDetector(), image, resolution=resolution), )
-    
 norm_layer = nn.InstanceNorm2d
 class ResidualBlock(nn.Module):
     def __init__(self, in_features):
@@ -248,66 +228,6 @@ class Generator(nn.Module):
 
         return out
 
-class LineartDetector:
-    def __init__(self, model, coarse_model):
-        self.model = model
-        self.model_coarse = coarse_model
-        self.device = "cpu"
-
-    @classmethod
-    def from_pretrained(cls):
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(current_dir, "../models/preprocessor/sk_model.pth")
-        coarse_model_path = os.path.join(current_dir, "../models/preprocessor/sk_model2.pth")
-
-        # print("model_path:", model_path)
-        model = Generator(3, 1, 3)
-        model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
-        model.eval()
-
-        coarse_model = Generator(3, 1, 3)
-        coarse_model.load_state_dict(torch.load(coarse_model_path, map_location=torch.device('cpu')))
-        coarse_model.eval()
-
-        return cls(model, coarse_model)
-    
-    def to(self, device):
-        self.model.to(device)
-        self.model_coarse.to(device)
-        self.device = device
-        return self
-    
-    def __call__(self, input_image, coarse=False, detect_resolution=512, output_type="pil", upscale_method="INTER_CUBIC", **kwargs):
-        input_image, output_type = common_input_validate(input_image, output_type, **kwargs)
-        detected_map, remove_pad = resize_image_with_pad(input_image, detect_resolution, upscale_method)
-
-        model = self.model_coarse if coarse else self.model
-        assert detected_map.ndim == 3
-        with torch.no_grad():
-            image = torch.from_numpy(detected_map).float().to(self.device)
-            image = image / 255.0
-            image = rearrange(image, 'h w c -> 1 c h w')
-            line = model(image)[0][0]
-
-            line = line.cpu().numpy()
-            line = (line * 255.0).clip(0, 255).astype(np.uint8)
-
-        detected_map = HWC3(line)
-        detected_map = remove_pad(255 - detected_map)
-        
-        if output_type == "pil":
-            detected_map = Image.fromarray(detected_map)
-            
-        return detected_map
-
-class LineArt_Preprocessor:
-    def execute(self, image, resolution=512, **kwargs):
-        model = LineartDetector.from_pretrained().to(comfy.model_management.get_torch_device())
-        print("model.device:", model.device)
-        out = common_annotator_call(model, image, resolution=resolution, apply_filter=False, coarse = kwargs["coarse"] == "enable")
-        del model
-        return (out, )
-    
 def nms(x, t, s):
     x = cv2.GaussianBlur(x.astype(np.float32), (0, 0), s)
 
@@ -399,5 +319,101 @@ class PIDINET_Preprocessor:
     def execute(self, image, resolution=512, **kwargs):
         model = PidiNetDetector.from_pretrained().to(comfy.model_management.get_torch_device())
         out = common_annotator_call(model, image, resolution=resolution, safe=True)
+        del model
+        return (out, )
+
+
+class OpenPoseDetector:
+    def __init__(self, model):
+        self.model = model
+        self.device = "cpu"
+
+    @classmethod
+    def from_pretrained(cls, filename="lightweight_openpose.pth"):
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        model_path = os.path.join(current_dir, f"../models/preprocessor/{filename}")
+
+        from lightweight_openpose import LightweightOpenPose
+        model = LightweightOpenPose()
+        model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
+        model.eval()
+
+        return cls(model)
+
+    def to(self, device):
+        self.model.to(device)
+        self.device = device
+        return self
+
+    def __call__(self, input_image, detect_resolution=512, output_type="pil", upscale_method="INTER_CUBIC", **kwargs):
+        input_image, output_type = common_input_validate(input_image, output_type, **kwargs)
+        detected_map, remove_pad = resize_image_with_pad(input_image, detect_resolution, upscale_method)
+
+        with torch.no_grad():
+            image = torch.from_numpy(detected_map).float().to(self.device)
+            image = image / 255.0
+            image = rearrange(image, 'h w c -> 1 c h w')
+            heatmaps, pafs = self.model(image)
+            pose_map = self.draw_pose(heatmaps, pafs)
+
+        detected_map = HWC3(remove_pad(pose_map.astype(np.uint8)))
+        
+        if output_type == "pil":
+            detected_map = Image.fromarray(detected_map)
+            
+        return detected_map
+
+
+class OpenPose_Preprocessor:
+    def execute(self, image, resolution=512, **kwargs):
+        model = OpenPoseDetector.from_pretrained().to(comfy.model_management.get_torch_device())
+        out = common_annotator_call(model, image, resolution=resolution)
+        del model
+        return (out, )
+
+
+class MiDaSDetector:
+    def __init__(self, model):
+        self.model = model
+        self.device = "cpu"
+
+    @classmethod
+    def from_pretrained(cls, model_type="MiDaS_small"):
+        model = torch.hub.load("intel-isl/MiDaS", model_type, pretrained=True)
+        model.eval()
+        return cls(model)
+
+    def to(self, device):
+        self.model.to(device)
+        self.device = device
+        return self
+
+    def __call__(self, input_image, detect_resolution=512, output_type="pil", upscale_method="INTER_CUBIC", **kwargs):
+        input_image, output_type = common_input_validate(input_image, output_type, **kwargs)
+        detected_map, remove_pad = resize_image_with_pad(input_image, detect_resolution, upscale_method)
+
+        with torch.no_grad():
+            image = torch.from_numpy(detected_map).float().to(self.device)
+            image = image / 255.0
+            image = rearrange(image, 'h w c -> 1 c h w')
+            depth = self.model(image)
+            depth = depth.cpu().numpy()
+            depth_min = depth.min()
+            depth_max = depth.max()
+            depth = (depth - depth_min) / (depth_max - depth_min)
+            depth = (depth * 255.0).clip(0, 255).astype(np.uint8)
+            depth = 255 - depth
+
+        detected_map = HWC3(remove_pad(depth))
+        
+        if output_type == "pil":
+            detected_map = Image.fromarray(detected_map)
+            
+        return detected_map
+
+class MiDaS_Preprocessor:
+    def execute(self, image, resolution=512, **kwargs):
+        model = MiDaSDetector.from_pretrained().to(comfy.model_management.get_torch_device())
+        out = common_annotator_call(model, image, resolution=resolution)
         del model
         return (out, )

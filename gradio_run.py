@@ -1,28 +1,22 @@
-import subprocess
 import os
 import gradio as gr
-import os
-from gradio_magicquill import MagicQuill
 import random
 import torch
 import numpy as np
 from PIL import Image, ImageOps
 import base64
 import io
-from fastapi import FastAPI, Request
-import uvicorn
-import requests
 from MagicQuill import folder_paths
-from MagicQuill.llava_new import LLaVAModel
 from MagicQuill.scribble_color_edit import ScribbleColorEditModel
+from MagicQuill.grounded_segment_anything import GroundedSegmentAnything
 import time
 import io
 
 AUTO_SAVE = False
 RES = 512
 
-llavaModel = LLaVAModel()
 scribbleColorEditModel = ScribbleColorEditModel()
+groundedSegmentAnything = GroundedSegmentAnything()
 
 def tensor_to_base64(tensor):
     tensor = tensor.squeeze(0) * 255.
@@ -56,7 +50,7 @@ def create_alpha_mask(base64_image):
         mask[0] = 1.0 - torch.from_numpy(alpha_channel)
     return mask
 
-def load_and_preprocess_image(base64_image, convert_to='RGB', has_alpha=False):
+def load_and_preprocess_image(base64_image, convert_to='RGB'):
     """Load and preprocess a base64 image."""
     image = read_base64_image(base64_image)
     image = image.convert(convert_to)
@@ -76,64 +70,38 @@ def load_and_resize_image(base64_image, convert_to='RGB', max_size=512):
     image_tensor = torch.from_numpy(image_array)[None,]
     return image_tensor
 
-def prepare_images_and_masks(total_mask, original_image, add_color_image, add_edge_image, remove_edge_image):
-    total_mask = create_alpha_mask(total_mask)
+def prepare_images_and_masks(original_image, text_prompt):
     original_image_tensor = load_and_preprocess_image(original_image)
-    if add_color_image:
-        add_color_image_tensor = load_and_preprocess_image(add_color_image)
-    else:
-        add_color_image_tensor = original_image_tensor
-    
-    add_edge_mask = create_alpha_mask(add_edge_image) if add_edge_image else torch.zeros_like(total_mask)
-    remove_edge_mask = create_alpha_mask(remove_edge_image) if remove_edge_image else torch.zeros_like(total_mask)
-    return add_color_image_tensor, original_image_tensor, total_mask, add_edge_mask, remove_edge_mask
+    # Generate mask using Grounded Segment Anything
+    image_pil = read_base64_image(original_image)
+    mask_pil, annotated_pil = groundedSegmentAnything.generate_mask(image_pil, text_prompt)
+    # Convert mask to tensor
+    mask_array = np.array(mask_pil).astype(np.float32) / 255.0
+    mask_tensor = torch.from_numpy(mask_array)[None,]
+    # Convert annotated image to base64
+    buffered = io.BytesIO()
+    annotated_pil.save(buffered, format="PNG")
+    annotated_img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    annotated_img_base64 = "data:image/png;base64," + annotated_img_str
+    return original_image_tensor, mask_tensor, annotated_img_base64
 
 
-def guess(original_image_tensor, add_color_image_tensor, add_edge_mask):
-    description, ans1, ans2 = llavaModel.process(original_image_tensor, add_color_image_tensor, add_edge_mask)
-    ans_list = []
-    if ans1 and ans1 != "":
-        ans_list.append(ans1)
-    if ans2 and ans2 != "":
-        ans_list.append(ans2)
-
-    return ", ".join(ans_list)
-
-def guess_prompt_handler(original_image, add_color_image, add_edge_image):
-    original_image_tensor = load_and_preprocess_image(original_image)
-    
-    if add_color_image:
-        add_color_image_tensor = load_and_preprocess_image(add_color_image)
-    else:
-        add_color_image_tensor = original_image_tensor
-    
-    width, height = original_image_tensor.shape[1], original_image_tensor.shape[2]
-    add_edge_mask = create_alpha_mask(add_edge_image) if add_edge_image else torch.zeros((1, height, width), dtype=torch.float32, device="cpu")
-    res = guess(original_image_tensor, add_color_image_tensor, add_edge_mask)
-    return res
-
-def generate(ckpt_name, total_mask, original_image, add_color_image, add_edge_image, remove_edge_image, positive_prompt, negative_prompt, grow_size, stroke_as_edge, fine_edge, edge_strength, color_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler):
-    add_color_image, original_image, total_mask, add_edge_mask, remove_edge_mask = prepare_images_and_masks(total_mask, original_image, add_color_image, add_edge_image, remove_edge_image)
+def generate(ckpt_name, original_image, text_prompt, positive_prompt, negative_prompt, grow_size, fine_edge, edge_strength, pose_strength, depth_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler):
+    original_image, mask, annotated_image = prepare_images_and_masks(original_image, text_prompt)
     progress = None
-    if torch.sum(remove_edge_mask).item() > 0 and torch.sum(add_edge_mask).item() == 0:
-        if positive_prompt == "":
-            positive_prompt = "empty scene"
-        edge_strength /= 3.
+    if fine_edge == 'enable':
+        edge_strength *= 2.0
 
-    latent_samples, final_image, lineart_output, color_output = scribbleColorEditModel.process(
+    latent_samples, final_image, lineart_output, pose_output, depth_output = scribbleColorEditModel.process(
         ckpt_name,
         original_image, 
-        add_color_image, 
         positive_prompt, 
         negative_prompt, 
-        total_mask, 
-        add_edge_mask, 
-        remove_edge_mask, 
+        mask, 
         grow_size, 
-        stroke_as_edge, 
-        fine_edge,
         edge_strength, 
-        color_strength,  
+        pose_strength,
+        depth_strength,
         inpaint_strength, 
         seed, 
         steps, 
@@ -144,28 +112,22 @@ def generate(ckpt_name, total_mask, original_image, add_color_image, add_edge_im
     )
 
     final_image_base64 = tensor_to_base64(final_image)
-    return final_image_base64
+    return final_image_base64, annotated_image
 
-def generate_image_handler(x, ckpt_name, negative_prompt, fine_edge, grow_size, edge_strength, color_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler):
+def generate_image_handler(original_image, text_prompt, ckpt_name, negative_prompt, fine_edge, grow_size, edge_strength, pose_strength, depth_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler):
     if seed == -1:
         seed = random.randint(0, 2**32 - 1)
-    ms_data = x['from_frontend']
-    positive_prompt = x['from_backend']['prompt']
-    stroke_as_edge = "enable"
-    res = generate(
+    res, annotated_image = generate(
         ckpt_name,
-        ms_data['total_mask'],
-        ms_data['original_image'],
-        ms_data['add_color_image'],
-        ms_data['add_edge_image'],
-        ms_data['remove_edge_image'],
-        positive_prompt,
+        original_image,
+        text_prompt,
+        positive_prompt,  # This should be defined somewhere or passed as a parameter
         negative_prompt,
         grow_size,
-        stroke_as_edge,
         fine_edge,
         edge_strength,
-        color_strength,
+        pose_strength,
+        depth_strength,
         inpaint_strength,
         seed,
         steps,
@@ -173,11 +135,10 @@ def generate_image_handler(x, ckpt_name, negative_prompt, fine_edge, grow_size, 
         sampler_name,
         scheduler
     )
-    x["from_backend"]["generated_image"] = res
     global AUTO_SAVE
     if AUTO_SAVE:
         auto_save_generated_image(res)
-    return x
+    return res, annotated_image
 
 def auto_save_generated_image(res):
     img_str = res
@@ -193,6 +154,8 @@ def auto_save_generated_image(res):
     img.save(save_path)
     print(f"Image saved to: {save_path}")
 
+positive_prompt = ""  # Define positive_prompt as a global variable
+
 css = '''
 .row {
     width: 90%;
@@ -206,7 +169,12 @@ footer {
 
 with gr.Blocks(css=css) as demo:
     with gr.Row(elem_classes="row"):
-        ms = MagicQuill()
+        with gr.Column():
+            original_image = gr.Image(type="base64", label="Original Image")
+            text_prompt = gr.Textbox(label="Text Prompt for Mask Generation", value="shirt", placeholder="Enter text to describe the object you want to segment")
+        with gr.Column():
+            output_image = gr.Image(type="base64", label="Generated Image")
+            annotated_image = gr.Image(type="base64", label="Annotated Image")
     with gr.Row(elem_classes="row"):
         with gr.Column():
             btn = gr.Button("Run", variant="primary")
@@ -236,12 +204,6 @@ with gr.Blocks(css=css) as demo:
                     value="",
                     interactive=True
                 )
-                # stroke_as_edge = gr.Radio(
-                #     label="Stroke as Edge",
-                #     choices=['enable', 'disable'],
-                #     value='enable',
-                #     interactive=True
-                # )
                 fine_edge = gr.Radio(
                     label="Fine Edge",
                     choices=['enable', 'disable'],
@@ -264,8 +226,16 @@ with gr.Blocks(css=css) as demo:
                     step=0.01,
                     interactive=True
                 )
-                color_strength = gr.Slider(
-                    label="Color Strength",
+                pose_strength = gr.Slider(
+                    label="Pose Strength",
+                    minimum=0.0,
+                    maximum=5.0,
+                    value=0.55,
+                    step=0.01,
+                    interactive=True
+                )
+                depth_strength = gr.Slider(
+                    label="Depth Strength",
                     minimum=0.0,
                     maximum=5.0,
                     value=0.55,
@@ -324,28 +294,7 @@ with gr.Blocks(css=css) as demo:
 
         auto_save_checkbox.change(fn=update_auto_save, inputs=[auto_save_checkbox])
         resolution_slider.change(fn=update_resolution, inputs=[resolution_slider])
-        btn.click(generate_image_handler, inputs=[ms, ckpt_name, negative_prompt, fine_edge, grow_size, edge_strength, color_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler], outputs=ms)
+        btn.click(generate_image_handler, inputs=[original_image, text_prompt, ckpt_name, negative_prompt, fine_edge, grow_size, edge_strength, pose_strength, depth_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler], outputs=[output_image, annotated_image])
     
-app = FastAPI()
-
-@app.post("/magic_quill/guess_prompt")
-async def guess_prompt(request: Request):
-    data = await request.json()
-    res = guess_prompt_handler(data['original_image'], data['add_color_image'], data['add_edge_image'])
-    return res
-
-@app.post("/magic_quill/process_background_img")
-async def process_background_img(request: Request):
-    global RES
-    max_size = RES
-    img = await request.json()
-    print("max_size:", max_size)
-    resized_img_tensor = load_and_resize_image(img, max_size=max_size)
-    resized_img_base64 = "data:image/png;base64," + tensor_to_base64(resized_img_tensor)
-    # add more processing here
-    return resized_img_base64
-
-app = gr.mount_gradio_app(app, demo, "/")
-
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=7860)
+    demo.launch(share=True, server_port=8080)

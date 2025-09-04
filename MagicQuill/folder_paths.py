@@ -36,6 +36,8 @@ folder_names_and_paths["photomaker"] = ([os.path.join(models_dir, "photomaker")]
 
 folder_names_and_paths["classifiers"] = ([os.path.join(models_dir, "classifiers")], {""})
 
+folder_names_and_paths["grounded_segment_anything"] = ([os.path.join(models_dir, "grounded_segment_anything")], supported_pt_extensions)
+
 output_directory = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output")
 temp_directory = os.path.join(os.path.dirname(os.path.realpath(__file__)), "temp")
 input_directory = os.path.join(os.path.dirname(os.path.realpath(__file__)), "input")
