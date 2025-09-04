@@ -113,6 +113,13 @@ def generate(ckpt_name, positive_prompt, negative_prompt, grow_size, edge_streng
 
 def generate_mask_handler(original_image_path, text_prompt):
     global ANNOTATED_IMAGE, MASK_IMAGE, ORIGINAL_IMAGE_TENSOR
+    
+    # Validate required inputs
+    if not original_image_path:
+        raise ValueError("Original image must be uploaded.")
+    if not text_prompt or text_prompt.strip() == "":
+        raise ValueError("Text prompt for mask generation cannot be empty.")
+        
     # Generate mask using Grounded Segment Anything
     image_pil = read_image_from_path(original_image_path)
     mask_pil, annotated_pil = groundedSegmentAnything.generate_mask(image_pil, text_prompt)
@@ -124,6 +131,17 @@ def generate_mask_handler(original_image_path, text_prompt):
 
 def generate_image_handler(original_image_path, text_prompt, positive_prompt, ckpt_name, negative_prompt, grow_size, edge_strength, pose_strength, depth_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler):
     global ANNOTATED_IMAGE, MASK_IMAGE, ORIGINAL_IMAGE_TENSOR
+    
+    # Validate required inputs
+    if not original_image_path:
+        raise ValueError("Original image must be uploaded.")
+    if not text_prompt or text_prompt.strip() == "":
+        raise ValueError("Text prompt for mask generation cannot be empty.")
+    if not positive_prompt or positive_prompt.strip() == "":
+        raise ValueError("Positive prompt cannot be empty.")
+    if not ckpt_name:
+        raise ValueError("Base model must be selected.")
+    
     if ANNOTATED_IMAGE is None or MASK_IMAGE is None:
         raise ValueError("Mask and annotated image must be generated first by 'Generate Mask' button.")
     if ORIGINAL_IMAGE_TENSOR is None:
