@@ -3,10 +3,17 @@ import torch
 import torchvision
 import cv2
 from PIL import Image
-from groundingdino.util.inference import Model as GroundingDINOModel
-from segment_anything import sam_model_registry, SamPredictor
 import supervision as sv
 import folder_paths
+
+import sys
+sys.path.append('./Grounded-Segment-Anything')
+sys.path.append('./Grounded-Segment-Anything/GroundingDINO')
+sys.path.append('./Grounded-Segment-Anything/segment_anything')
+
+from groundingdino.util.inference import Model as GroundingDINOModel
+from segment_anything import sam_model_registry, SamPredictor
+
 
 class GroundedSegmentAnything:
     def __init__(self):
@@ -30,9 +37,9 @@ class GroundedSegmentAnything:
             image_cv = image
 
         # --- GroundingDINO Detection ---
-        detections = self.grounding_dino_model.predict_with_caption(
+        detections = self.grounding_dino_model.predict_with_classes(
             image=image_cv,
-            caption=text_prompt,
+            classes=[text_prompt],
             box_threshold=box_threshold,
             text_threshold=text_threshold
         )

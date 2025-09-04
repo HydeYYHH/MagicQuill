@@ -19,11 +19,11 @@ def download_file(url, destination):
 def main():
     # Define base directories
     base_dir = Path(".")
-    checkpoints_dir = base_dir / "MagicQuill" / "models" / "checkpoints"
-    controlnet_dir = base_dir / "MagicQuill" / "models" / "controlnet"
-    inpaint_dir = base_dir / "MagicQuill" / "models" / "inpaint" / "brushnet" / "random_mask_brushnet_ckpt"
-    preprocessor_dir = base_dir / "MagicQuill" / "models" / "preprocessor"
-    grounded_segment_anything_dir = base_dir / "MagicQuill" / "models" / "grounded_segment_anything"
+    checkpoints_dir = base_dir / "models" / "checkpoints" / "SD1.5"
+    controlnet_dir = base_dir / "models" / "controlnet"
+    inpaint_dir = base_dir / "models" / "inpaint" / "brushnet" / "random_mask_brushnet_ckpt"
+    preprocessor_dir = base_dir / "models" / "preprocessor"
+    grounded_segment_anything_dir = base_dir / "models" / "grounded_segment_anything"
     
     # Create directories
     for directory in [checkpoints_dir, controlnet_dir, inpaint_dir, preprocessor_dir, grounded_segment_anything_dir]:
@@ -52,8 +52,8 @@ def main():
         # Preprocessor models
         ("https://huggingface.co/LiuZichen/MagicQuill-models/resolve/main/preprocessor/table5_pidinet.pth?download=true",
          preprocessor_dir / "table5_pidinet.pth"),
-        ("https://download.01.org/opencv/openvino_training_extensions/models/human_pose_estimation/checkpoint_iter_370000.pth",
-         preprocessor_dir / "lightweight_openpose.pth"),
+        ("https://huggingface.co/lllyasviel/ControlNet/resolve/main/annotator/ckpts/body_pose_model.pth",
+         preprocessor_dir / "openpose.pth"),
         
         # Grounded Segment Anything models
         ("https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth",
