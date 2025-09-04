@@ -5,7 +5,7 @@ import torch
 import numpy as np
 from PIL import Image, ImageOps
 from MagicQuill import folder_paths
-from MagicQuill.scribble_color_edit import ScribbleColorEditModel
+from MagicQuill.controlnet_brushnet import ControlNetBrushNetModel
 from MagicQuill.grounded_segment_anything import GroundedSegmentAnything
 import time
 
@@ -15,7 +15,7 @@ ANNOTATED_IMAGE = None
 MASK_IMAGE = None
 ORIGINAL_IMAGE_TENSOR = None
 
-scribbleColorEditModel = ScribbleColorEditModel()
+controlNetBrushNetModel = ControlNetBrushNetModel()
 groundedSegmentAnything = GroundedSegmentAnything()
 
 def tensor_to_pil_image(tensor):
@@ -81,7 +81,7 @@ def generate(ckpt_name, positive_prompt, negative_prompt, grow_size, edge_streng
     mask_tensor = prepare_masks()
     
     with torch.no_grad():
-        result = scribbleColorEditModel.process(
+        result = controlNetBrushNetModel.process(
             ckpt_name,
             ORIGINAL_IMAGE_TENSOR, 
             positive_prompt, 

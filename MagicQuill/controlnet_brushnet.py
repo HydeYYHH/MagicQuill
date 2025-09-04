@@ -7,7 +7,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from .brushnet_nodes import BrushNetLoader, BrushNet, BlendInpaint, get_files_with_extension
 from .comfyui_utils import CheckpointLoaderSimple, ControlNetLoader, ControlNetApplyAdvanced, CLIPTextEncode, KSampler, MiDaS_Preprocessor, OpenPose_Preprocessor, VAEDecode, GrowMask, PIDINET_Preprocessor
 
-class ScribbleColorEditModel():
+class ControlNetBrushNetModel():
     def __init__(self):
         self.checkpoint_loader = CheckpointLoaderSimple()
         self.clip_text_encoder = CLIPTextEncode()
@@ -59,6 +59,8 @@ class ScribbleColorEditModel():
         pose_output = None
         depth_output = None
 
+        mask = self.mask_processor.expand_mask(mask, expand=grow_size, tapered_corners=True)[0]
+
         if edge_strength > 0.0:
             print("Apply edge controlnet")
             # Resize masks to match the dimensions of lineart_output
@@ -78,7 +80,6 @@ class ScribbleColorEditModel():
             depth_output = self.depth_processor.execute(image, resolution=512)[0]
             positive, negative = self.controlnet_apply.apply_controlnet(positive, negative, self.depth_controlnet, depth_output, depth_strength, 0.0, 1.0)
 
-        mask = self.mask_processor.expand_mask(mask, expand=grow_size, tapered_corners=True)[0]
         # BrushNet
         model, positive, negative, latent = self.brushnet_node.model_update(
             model=self.model,
