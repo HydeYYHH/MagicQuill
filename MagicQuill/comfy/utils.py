@@ -399,6 +399,10 @@ def lanczos(samples, width, height):
     return result.to(samples.device, samples.dtype)
 
 def common_upscale(samples, width, height, upscale_method, crop):
+        # Ensure width and height are at least 1 to avoid RuntimeError
+        width = max(1, width)
+        height = max(1, height)
+        
         if crop == "center":
             old_width = samples.shape[3]
             old_height = samples.shape[2]
@@ -410,7 +414,10 @@ def common_upscale(samples, width, height, upscale_method, crop):
                 x = round((old_width - old_width * (new_aspect / old_aspect)) / 2)
             elif old_aspect < new_aspect:
                 y = round((old_height - old_height * (old_aspect / new_aspect)) / 2)
-            s = samples[:,:,y:old_height-y,x:old_width-x]
+            # Ensure we don't crop to zero dimensions
+            crop_width = max(1, old_width - x * 2)
+            crop_height = max(1, old_height - y * 2)
+            s = samples[:,:,y:y+crop_height,x:x+crop_width]
         else:
             s = samples
 

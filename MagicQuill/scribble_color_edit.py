@@ -44,15 +44,20 @@ class ScribbleColorEditModel():
         self.brushnet = self.brushnet_loader.brushnet_loading(brushnet_name, dtype)[0]
     
     def process(self, ckpt_name, image, positive_prompt, negative_prompt, mask, grow_size, edge_strength, pose_strength, depth_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler, base_model_version='SD1.5', dtype='float16'):
-        if ckpt_name != self.ckpt_name:
-            self.ckpt_name = ckpt_name
-            with torch.no_grad():
+        with torch.no_grad():
+            if ckpt_name != self.ckpt_name:
+                self.ckpt_name = ckpt_name
                 self.model, self.clip, self.vae = self.checkpoint_loader.load_checkpoint(ckpt_name)
-        if not hasattr(self, 'edge_controlnet') or not hasattr(self, 'color_controlnet') or not hasattr(self, 'brushnet') or not hasattr(self, 'pose_controlnet') or not hasattr(self, 'depth_controlnet'):
-            self.load_models(base_model_version, dtype)
+            if not hasattr(self, 'edge_controlnet') or not hasattr(self, 'pose_controlnet') or not hasattr(self, 'depth_controlnet') or not hasattr(self, 'brushnet'):
+                self.load_models(base_model_version, dtype)
             
         positive = self.clip_text_encoder.encode(self.clip, positive_prompt)[0]
         negative = self.clip_text_encoder.encode(self.clip, negative_prompt)[0]        
+
+        # Initialize output variables with None
+        lineart_output = None
+        pose_output = None
+        depth_output = None
 
         if edge_strength > 0.0:
             print("Apply edge controlnet")
@@ -104,5 +109,11 @@ class ScribbleColorEditModel():
         # Image Blending
         final_image = self.vae_decoder.decode(self.vae, latent_samples)[0]
         final_image = self.blender.blend_inpaint(final_image, image, mask, kernel=10, sigma=10.0)[0]
-
-        return (latent_samples, final_image, lineart_output, pose_output, depth_output)
+        
+        # Free up memory by deleting temporary variables
+        del lineart_output, pose_output, depth_output, positive, negative, mask, image, latent_samples, model
+        
+        # Force garbage collection and empty CUDA cache
+        torch.cuda.empty_cache()
+        
+        return (None, final_image, None, None, None)

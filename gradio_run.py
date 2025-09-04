@@ -13,6 +13,7 @@ AUTO_SAVE = False
 RES = 512
 ANNOTATED_IMAGE = None
 MASK_IMAGE = None
+ORIGINAL_IMAGE_TENSOR = None
 
 scribbleColorEditModel = ScribbleColorEditModel()
 groundedSegmentAnything = GroundedSegmentAnything()
@@ -56,69 +57,84 @@ def load_and_resize_image(image_path, convert_to='RGB', max_size=512):
     image_tensor = torch.from_numpy(image_array)[None,]
     return image_tensor
 
-def prepare_images_and_masks(original_image_path, text_prompt):
-    original_image_tensor = load_and_preprocess_image(original_image_path)
+def prepare_masks():
     # Use the global annotated image and mask
-    global ANNOTATED_IMAGE, MASK_IMAGE
+    global ANNOTATED_IMAGE, MASK_IMAGE, ORIGINAL_IMAGE_TENSOR
     if ANNOTATED_IMAGE is None or MASK_IMAGE is None:
         raise ValueError("Mask and annotated image must be generated first by 'Generate Mask' button.")
     # Convert mask to tensor
     mask_array = np.array(MASK_IMAGE).astype(np.float32) / 255.0
     mask_tensor = torch.from_numpy(mask_array)[None,]
-    return original_image_tensor, mask_tensor
+    
+    if ORIGINAL_IMAGE_TENSOR is not None and mask_tensor.shape[2:] != ORIGINAL_IMAGE_TENSOR.shape[1:3]:
+        mask_tensor = torch.nn.functional.interpolate(
+            mask_tensor.unsqueeze(1).float(), 
+            size=(ORIGINAL_IMAGE_TENSOR.shape[1], ORIGINAL_IMAGE_TENSOR.shape[2]), 
+            mode='nearest'
+        ).squeeze(1).round()
+    
+    return mask_tensor
 
 
-def generate(ckpt_name, original_image_path, text_prompt, positive_prompt, negative_prompt, grow_size, fine_edge, edge_strength, pose_strength, depth_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler, progress=None):
-    original_image_tensor, mask_tensor = prepare_images_and_masks(original_image_path, text_prompt)
-    if fine_edge == 'enable':
-        edge_strength *= 2.0
-
-    result = scribbleColorEditModel.process(
-        ckpt_name,
-        original_image_tensor, 
-        positive_prompt, 
-        negative_prompt, 
-        mask_tensor, 
-        grow_size, 
-        edge_strength, 
-        pose_strength,
-        depth_strength,
-        inpaint_strength, 
-        seed, 
-        steps, 
-        cfg, 
-        sampler_name, 
-        scheduler,
-        base_model_version='SD1.5',
-        dtype='float16'
-    )
+def generate(ckpt_name, positive_prompt, negative_prompt, grow_size, edge_strength, pose_strength, depth_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler, progress=None):
+    global ORIGINAL_IMAGE_TENSOR
+    mask_tensor = prepare_masks()
+    
+    with torch.no_grad():
+        result = scribbleColorEditModel.process(
+            ckpt_name,
+            ORIGINAL_IMAGE_TENSOR, 
+            positive_prompt, 
+            negative_prompt, 
+            mask_tensor, 
+            grow_size, 
+            edge_strength, 
+            pose_strength,
+            depth_strength,
+            inpaint_strength, 
+            seed, 
+            steps, 
+            cfg, 
+            sampler_name, 
+            scheduler,
+            base_model_version='SD1.5',
+            dtype='float16'
+        )
 
     final_pil_image = tensor_to_pil_image(result[1])
+    
+    # Free up memory by deleting temporary variables
+    del mask_tensor, result
+    
+    # Force garbage collection and empty CUDA cache
+    torch.cuda.empty_cache()
+    
     return final_pil_image
 
 def generate_mask_handler(original_image_path, text_prompt):
-    global ANNOTATED_IMAGE, MASK_IMAGE
+    global ANNOTATED_IMAGE, MASK_IMAGE, ORIGINAL_IMAGE_TENSOR
     # Generate mask using Grounded Segment Anything
     image_pil = read_image_from_path(original_image_path)
     mask_pil, annotated_pil = groundedSegmentAnything.generate_mask(image_pil, text_prompt)
     ANNOTATED_IMAGE = annotated_pil
     MASK_IMAGE = mask_pil
+    
+    ORIGINAL_IMAGE_TENSOR = load_and_resize_image(original_image_path, max_size=RES)
     return annotated_pil
 
-def generate_image_handler(original_image_path, text_prompt, positive_prompt, ckpt_name, negative_prompt, fine_edge, grow_size, edge_strength, pose_strength, depth_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler):
-    global ANNOTATED_IMAGE, MASK_IMAGE
+def generate_image_handler(original_image_path, text_prompt, positive_prompt, ckpt_name, negative_prompt, grow_size, edge_strength, pose_strength, depth_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler):
+    global ANNOTATED_IMAGE, MASK_IMAGE, ORIGINAL_IMAGE_TENSOR
     if ANNOTATED_IMAGE is None or MASK_IMAGE is None:
         raise ValueError("Mask and annotated image must be generated first by 'Generate Mask' button.")
+    if ORIGINAL_IMAGE_TENSOR is None:
+        ORIGINAL_IMAGE_TENSOR = load_and_resize_image(original_image_path, max_size=RES)
     if seed == -1:
         seed = random.randint(0, 2**32 - 1)
     final_pil_image = generate(
         ckpt_name,
-        original_image_path,
-        text_prompt,
         positive_prompt,
         negative_prompt,
         grow_size,
-        fine_edge,
         edge_strength,
         pose_strength,
         depth_strength,
@@ -189,12 +205,6 @@ with gr.Blocks(css=css) as demo:
                 negative_prompt = gr.Textbox(
                     label="Negative Prompt",
                     value="",
-                    interactive=True
-                )
-                fine_edge = gr.Radio(
-                    label="Fine Edge",
-                    choices=['enable', 'disable'],
-                    value='disable',
                     interactive=True
                 )
                 grow_size = gr.Slider(
@@ -278,11 +288,15 @@ with gr.Blocks(css=css) as demo:
         def update_resolution(value):
             global RES
             RES = value
+            # Re-cache original image with new resolution if available
+            global ORIGINAL_IMAGE_TENSOR, original_image
+            if original_image.value is not None:
+                ORIGINAL_IMAGE_TENSOR = load_and_resize_image(original_image.value, max_size=RES)
 
         auto_save_checkbox.change(fn=update_auto_save, inputs=[auto_save_checkbox])
         resolution_slider.change(fn=update_resolution, inputs=[resolution_slider])
         mask_btn.click(generate_mask_handler, inputs=[original_image, text_prompt], outputs=[original_image])
-        btn.click(generate_image_handler, inputs=[original_image, text_prompt, positive_prompt, ckpt_name, negative_prompt, fine_edge, grow_size, edge_strength, pose_strength, depth_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler], outputs=[output_image])
+        btn.click(generate_image_handler, inputs=[original_image, text_prompt, positive_prompt, ckpt_name, negative_prompt, grow_size, edge_strength, pose_strength, depth_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler], outputs=[output_image])
         
         # Make the output image the same size as the input image
         original_image.change(fn=lambda x: gr.update(height=512, width=512) if x is not None else None, inputs=[original_image], outputs=[output_image])

@@ -52,8 +52,6 @@ def main():
         # Preprocessor models
         ("https://huggingface.co/LiuZichen/MagicQuill-models/resolve/main/preprocessor/table5_pidinet.pth?download=true",
          preprocessor_dir / "table5_pidinet.pth"),
-        ("https://huggingface.co/lllyasviel/ControlNet/resolve/main/annotator/ckpts/body_pose_model.pth",
-         preprocessor_dir / "openpose.pth"),
         
         # Grounded Segment Anything models
         ("https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth",
