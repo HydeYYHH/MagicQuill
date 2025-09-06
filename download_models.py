@@ -56,8 +56,8 @@ def main():
         # Grounded Segment Anything models
         ("https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth",
          grounded_segment_anything_dir / "groundingdino_swint_ogc.pth"),
-        ("https://huggingface.co/datasets/Gourieff/ReActor/resolve/main/models/sams/sam_vit_b_01ec64.pth?download=true",
-         grounded_segment_anything_dir / "sam_vit_b_01ec64.pth"),
+        ("https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth",
+         grounded_segment_anything_dir / "sam_vit_h_4b8939.pth"),
     ]
     
     # Download all models

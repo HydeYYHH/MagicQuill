@@ -111,10 +111,7 @@ class ControlNetBrushNetModel():
         final_image = self.vae_decoder.decode(self.vae, latent_samples)[0]
         final_image = self.blender.blend_inpaint(final_image, image, mask, kernel=10, sigma=10.0)[0]
         
-        # Free up memory by deleting temporary variables
         del lineart_output, pose_output, depth_output, positive, negative, mask, image, latent_samples, model
-        
-        # Force garbage collection and empty CUDA cache
         torch.cuda.empty_cache()
         
         return (None, final_image, None, None, None)

@@ -19,8 +19,8 @@ class GroundedSegmentAnything:
     def __init__(self):
         grounding_dino_config_path = './Grounded-Segment-Anything/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py'
         grounding_dino_path = folder_paths.get_full_path("grounded_segment_anything", "groundingdino_swint_ogc.pth")
-        sam_checkpoint_path = folder_paths.get_full_path("grounded_segment_anything", "sam_vit_b_01ec64.pth")
-        sam_model_type = 'vit_b'
+        sam_checkpoint_path = folder_paths.get_full_path("grounded_segment_anything", "sam_vit_h_4b8939.pth")
+        sam_model_type = 'vit_h'
         self.grounding_dino_model = GroundingDINOModel(
             model_config_path=grounding_dino_config_path,
             model_checkpoint_path=grounding_dino_path,
