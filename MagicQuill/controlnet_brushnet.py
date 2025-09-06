@@ -3,6 +3,7 @@ import torch
 import os
 import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import folder_paths
 
 from .brushnet_nodes import BrushNetLoader, BrushNet, BlendInpaint, get_files_with_extension
 from .comfyui_utils import CheckpointLoaderSimple, ControlNetLoader, ControlNetApplyAdvanced, CLIPTextEncode, KSampler, MiDaS_Preprocessor, OpenPose_Preprocessor, VAEDecode, GrowMask, PIDINET_Preprocessor
@@ -22,7 +23,8 @@ class ControlNetBrushNetModel():
         self.ksampler = KSampler()
         self.vae_decoder = VAEDecode()
         self.blender = BlendInpaint()
-        self.ckpt_name = os.path.join("SD1.5", "realisticVisionV60B1_v51VAE.safetensors")
+        checkpoints = folder_paths.get_filename_list("checkpoints")
+        self.ckpt_name = checkpoints[0] if checkpoints else None
         with torch.no_grad():
             self.model, self.clip, self.vae = self.checkpoint_loader.load_checkpoint(self.ckpt_name)
         self.load_models('SD1.5', 'float16')

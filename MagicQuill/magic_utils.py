@@ -6,7 +6,6 @@ from torchvision import transforms
 import cv2  # OpenCV
 import torch
 import warnings
-import os
 
 
 

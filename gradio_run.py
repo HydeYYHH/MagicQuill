@@ -11,9 +11,11 @@ import time
 
 AUTO_SAVE = False
 RES = 512
+ORIGINAL_DATA = {'path': None, 'pil_image': None, 'tensor': None}
+INITIAL_ORIGINAL_PATH = None
 ANNOTATED_IMAGE = None
 MASK_IMAGE = None
-ORIGINAL_IMAGE_TENSOR = None
+
 
 controlNetBrushNetModel = ControlNetBrushNetModel()
 groundedSegmentAnything = GroundedSegmentAnything()
@@ -59,14 +61,14 @@ def load_and_resize_image(image_path, convert_to='RGB', max_size=512):
 
 def prepare_masks():
     # Use the global annotated image and mask
-    global ANNOTATED_IMAGE, MASK_IMAGE, ORIGINAL_IMAGE_TENSOR
+    global ANNOTATED_IMAGE, MASK_IMAGE
     if ANNOTATED_IMAGE is None or MASK_IMAGE is None:
         raise ValueError("Mask and annotated image must be generated first by 'Generate Mask' button.")
     # Convert mask to tensor
     mask_array = np.array(MASK_IMAGE).astype(np.float32) / 255.0
     mask_tensor = torch.from_numpy(mask_array)[None,]
     
-    if ORIGINAL_IMAGE_TENSOR is not None and mask_tensor.shape[2:] != ORIGINAL_IMAGE_TENSOR.shape[1:3]:
+    if ORIGINAL_DATA.get('tensor') is not None and mask_tensor.shape[2:] != ORIGINAL_DATA['tensor'].shape[1:3]:
         mask_tensor = torch.nn.functional.interpolate(
             mask_tensor.unsqueeze(1).float(), 
             size=(ORIGINAL_IMAGE_TENSOR.shape[1], ORIGINAL_IMAGE_TENSOR.shape[2]), 
@@ -112,7 +114,16 @@ def generate(ckpt_name, positive_prompt, negative_prompt, grow_size, edge_streng
     return final_pil_image
 
 def generate_mask_handler(original_image_path, text_prompt):
-    global ANNOTATED_IMAGE, MASK_IMAGE, ORIGINAL_IMAGE_TENSOR
+    global ORIGINAL_DATA, ANNOTATED_IMAGE, MASK_IMAGE
+    if not isinstance(ORIGINAL_DATA, dict):
+        ORIGINAL_DATA = {'path': None, 'pil_image': None, 'tensor': None}
+    if ORIGINAL_DATA['path'] != original_image_path:
+        ORIGINAL_DATA['path'] = original_image_path
+        ORIGINAL_DATA['pil_image'] = read_image_from_path(original_image_path)
+        ORIGINAL_DATA.setdefault('tensor', load_and_resize_image(original_image_path, max_size=RES))
+    global INITIAL_ORIGINAL_PATH
+    if INITIAL_ORIGINAL_PATH is None:
+        INITIAL_ORIGINAL_PATH = original_image_path
     
     # Validate required inputs
     if not original_image_path:
@@ -121,16 +132,15 @@ def generate_mask_handler(original_image_path, text_prompt):
         raise ValueError("Text prompt for mask generation cannot be empty.")
         
     # Generate mask using Grounded Segment Anything
-    image_pil = read_image_from_path(original_image_path)
-    mask_pil, annotated_pil = groundedSegmentAnything.generate_mask(image_pil, text_prompt)
+    mask_pil, annotated_pil = groundedSegmentAnything.generate_mask(ORIGINAL_DATA['pil_image'], text_prompt)
     ANNOTATED_IMAGE = annotated_pil
     MASK_IMAGE = mask_pil
+    global ORIGINAL_IMAGE_TENSOR
     
-    ORIGINAL_IMAGE_TENSOR = load_and_resize_image(original_image_path, max_size=RES)
     return annotated_pil
 
 def generate_image_handler(original_image_path, text_prompt, positive_prompt, ckpt_name, negative_prompt, grow_size, edge_strength, pose_strength, depth_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler):
-    global ANNOTATED_IMAGE, MASK_IMAGE, ORIGINAL_IMAGE_TENSOR
+    global ANNOTATED_IMAGE, MASK_IMAGE
     
     # Validate required inputs
     if not original_image_path:
@@ -144,8 +154,8 @@ def generate_image_handler(original_image_path, text_prompt, positive_prompt, ck
     
     if ANNOTATED_IMAGE is None or MASK_IMAGE is None:
         raise ValueError("Mask and annotated image must be generated first by 'Generate Mask' button.")
-    if ORIGINAL_IMAGE_TENSOR is None:
-        ORIGINAL_IMAGE_TENSOR = load_and_resize_image(original_image_path, max_size=RES)
+    if ORIGINAL_DATA['tensor'] is None:
+        ORIGINAL_DATA['tensor'] = load_and_resize_image(ORIGINAL_DATA['path'], max_size=RES)
     if seed == -1:
         seed = random.randint(0, 2**32 - 1)
     final_pil_image = generate(
@@ -204,7 +214,7 @@ with gr.Blocks(css=css) as demo:
                 ckpt_name = gr.Dropdown(
                     label="Base Model Name",
                     choices=folder_paths.get_filename_list("checkpoints"),
-                    value=os.path.join('SD1.5', 'realisticVisionV60B1_v51VAE.safetensors'),
+                    value=folder_paths.get_filename_list("checkpoints")[0] if folder_paths.get_filename_list("checkpoints") else "",
                     interactive=True
                 )
                 auto_save_checkbox = gr.Checkbox(
